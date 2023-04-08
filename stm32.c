@@ -13,7 +13,7 @@
 #define Temp_ID 2
 #define Volt_ID 3
 #define MISC_ID 4
-#define NOT_A_ID_BYTE 100
+#define NOT_A_ID_BYTE 9
 
 
 int binaryToDecimal(char* binary)
@@ -133,6 +133,7 @@ void setup() {
   Serial.begin(9600, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
 }
 char data_value[16] = "";
+int saved_value_identity;
 
 void loop() {
   char buffer[8];
@@ -142,7 +143,7 @@ void loop() {
 	int check_symbol;
 	int pos = 0;
 	int temporary_value_identity;
-	int saved_value_identity;
+
 
 
 
@@ -202,6 +203,7 @@ void loop() {
   }
   delay(1000);
   Serial.printf("\nData: %s", data_value);
+  Serial.printf("\nIdentity: %d", saved_value_identity);
 
 
  
