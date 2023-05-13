@@ -153,41 +153,41 @@ void loop() {
   
 
     is_decimal = is_Decimal(buffer);
-	//check what non-decimal symbol it is
-	check_symbol = check_nondec_symbol(buffer);
-	if(buffer)
-	temporary_value_identity = identity_byte(buffer); 
+	  //check what non-decimal symbol it is
+	  check_symbol = check_nondec_symbol(buffer);
+	
+	  temporary_value_identity = identity_byte(buffer); 
 
-	if(temporary_value_identity != NOT_A_ID_BYTE){
-		saved_value_identity = temporary_value_identity;
-	}
+    if(temporary_value_identity != NOT_A_ID_BYTE){ //if identity byte is there
+		  saved_value_identity = temporary_value_identity; //save that 
+	  }
 
 	
 		
-	if(is_decimal == 1){
-		//if it's decimal then convert ascii to decimal val
-		decimal_val = ascii_to_decimal(buffer);
-		//Serial.printf("current decimal digit: %s", decimal_val);
-		strcat(data_value, decimal_val); //concatenate decimal digit to data arr
+	  if(is_decimal == 1){
+		  //if it's decimal then convert ascii to decimal val
+		  decimal_val = ascii_to_decimal(buffer);
+		  //Serial.printf("current decimal digit: %s", decimal_val);
+		  strcat(data_value, decimal_val); //concatenate decimal digit to data arr
 
-	}
-	//if it's not decimal, then check what kind of character it is
-	else{
+	  }
+	  //if it's not decimal, then check what kind of character it is
+  	else{
 
-		//if it's a period then we concatenate to data_value
-		if(check_symbol == PERIOD){
-			strcat(data_value, ".");
-		}
+		  //if it's a period then we concatenate to data_value
+		  if(check_symbol == PERIOD){
+			  strcat(data_value, ".");
+		  }
 
-		//if delimiter byte, then we clear data_value
-		if(check_symbol == DELIMITER){
-			//display data_value on LCD and the cursor location will depend on saved_value_identity
+		  //if delimiter byte, then we clear data_value
+		  if(check_symbol == DELIMITER){
+		  	//display data_value on LCD and the cursor location will depend on saved_value_identity
 
-			data_value[0] = '\0'; //clear Data Value for new income value
-		}
+		  	data_value[0] = '\0'; //clear Data Value for new income value
+		  }
 
-		//if it's a white space or some junk value, we just do nothing
-	}
+		  //if it's a white space or some junk value, we just do nothing
+	  }
 	
 
 	
