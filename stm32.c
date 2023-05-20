@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <Wire.h>
+#include <SPI.h>
 
 #define DELIMITER 0
 #define SPACE 1
@@ -14,6 +16,23 @@
 #define Volt_ID 3
 #define MISC_ID 4
 #define NOT_A_ID_BYTE 9
+
+//Variables for the PT100 boards
+double resistance;
+uint8_t reg1, reg2; //reg1 holds MSB, reg2 holds LSB for RTD
+uint16_t fullreg; //fullreg holds the combined reg1 and reg2
+double temperature; //global variable
+//Variables and parameters for the R - T conversion
+double Z1, Z2, Z3, Z4, Rt;
+double RTDa = 3.9083e-3;
+double RTDb = -5.775e-7;
+double rpoly = 0;
+
+/*Temperature Sensor SPI pins*/
+const int chipSelectPin = 10; //CS pin #10
+//pin 12 - MISO
+//pin 11 - MOSI
+//pin 13 - SCK
 
 
 int binaryToDecimal(char* binary)
@@ -128,9 +147,95 @@ char* ascii_to_decimal(char* buf){
 	return decimal;
 }
 
+void convertToTemperature()
+{
+  Rt = resistance;
+  Rt /= 32768;
+  Rt *= 430; //This is now the real resistance in Ohms
+
+  Z1 = -RTDa;
+  Z2 = RTDa * RTDa - (4 * RTDb);
+  Z3 = (4 * RTDb) / 100;
+  Z4 = 2 * RTDb;
+
+  temperature = Z2 + (Z3 * Rt);
+  temperature = (sqrt(temperature) + Z1) / Z4;
+
+  if (temperature >= 0)
+  {
+    Serial.print("Temperature: ");
+    Serial.println(temperature); //Temperature in Celsius degrees
+    return; //exit
+  }
+  else
+  {
+    Rt /= 100;
+    Rt *= 100; // normalize to 100 ohm
+
+    rpoly = Rt;
+
+    temperature = -242.02;
+    temperature += 2.2228 * rpoly;
+    rpoly *= Rt; // square
+    temperature += 2.5859e-3 * rpoly;
+    rpoly *= Rt; // ^3
+    temperature -= 4.8260e-6 * rpoly;
+    rpoly *= Rt; // ^4
+    temperature -= 2.8183e-8 * rpoly;
+    rpoly *= Rt; // ^5
+    temperature += 1.5243e-10 * rpoly;
+
+    Serial.print("Temperature: ");
+    Serial.println(temperature); //Temperature in Celsius degrees
+  }
+  //Note: all formulas can be found in the AN-709 application note from Analog Devices
+}
+
+void readRegister()
+{
+  SPI.beginTransaction(SPISettings(500000, MSBFIRST, SPI_MODE1));
+  digitalWrite(chipSelectPin, LOW);
+
+  SPI.transfer(0x80); //80h = 128 - config register
+  SPI.transfer(0xB0); //B0h = 176 - 10110000: bias ON, 1-shot, start 1-shot, 3-wire, rest are 0
+  digitalWrite(chipSelectPin, HIGH);
+
+  digitalWrite(chipSelectPin, LOW);
+  SPI.transfer(1);
+  reg1 = SPI.transfer(0xFF);
+  reg2 = SPI.transfer(0xFF);
+  digitalWrite(chipSelectPin, HIGH);
+
+  fullreg = reg1; //read MSB
+  fullreg <<= 8;  //Shift to the MSB part
+  fullreg |= reg2; //read LSB and combine it with MSB
+  fullreg >>= 1; //Shift D0 out.
+  resistance = fullreg; //pass the value to the resistance variable
+  //note: this is not yet the resistance of the RTD!
+
+  digitalWrite(chipSelectPin, LOW);
+
+  SPI.transfer(0x80); //80h = 128
+  SPI.transfer(144); //144 = 10010000
+  SPI.endTransaction();
+  digitalWrite(chipSelectPin, HIGH);
+
+  Serial.print("\nResistance: ");
+  Serial.println(resistance);
+}
+
+void Retrieve_Temperature_and_Print(){
+  readRegister();
+  convertToTemperature();
+  //Serial.printf("\nTemperature: %f", temperature);
+}
+
+
 void setup() {
-  
-  Serial.begin(9600, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
+  SPI.begin();
+  Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
+
+  pinMode(chipSelectPin, OUTPUT); //because CS is manually switched  
 }
 char data_value[16] = "";
 int saved_value_identity;
@@ -144,9 +249,7 @@ void loop() {
 	int pos = 0;
 	int temporary_value_identity;
 
-
-
-
+  Retrieve_Temperature_and_Print();
 
   if (Serial.available() > 0) {
     int bytesread = Serial.readBytes(buffer, 8);
@@ -204,6 +307,7 @@ void loop() {
   delay(1000);
   Serial.printf("\nData: %s", data_value);
   Serial.printf("\nIdentity: %d", saved_value_identity);
+
 
 
  
