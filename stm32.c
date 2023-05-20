@@ -2,8 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <Wire.h>
-#include <SPI.h>
+#include <Adafruit_MAX31865.h>
 
 #define DELIMITER 0
 #define SPACE 1
@@ -17,23 +16,13 @@
 #define MISC_ID 4
 #define NOT_A_ID_BYTE 9
 
-//Variables for the PT100 boards
-double resistance;
-uint8_t reg1, reg2; //reg1 holds MSB, reg2 holds LSB for RTD
-uint16_t fullreg; //fullreg holds the combined reg1 and reg2
-double temperature; //global variable
-//Variables and parameters for the R - T conversion
-double Z1, Z2, Z3, Z4, Rt;
-double RTDa = 3.9083e-3;
-double RTDb = -5.775e-7;
-double rpoly = 0;
+// Use software SPI: CS, DI, DO, CLK
+Adafruit_MAX31865 thermo = Adafruit_MAX31865(10, 11, 12, 13);
 
-/*Temperature Sensor SPI pins*/
-const int chipSelectPin = 10; //CS pin #10
-//pin 12 - MISO
-//pin 11 - MOSI
-//pin 13 - SCK
-
+// The value of the Rref resistor. Use 430.0 for PT100 and 4300.0 for PT1000
+#define RREF 430.0
+// 100.0 for PT100, 1000.0 for PT1000
+#define RNOMINAL  100.0
 
 int binaryToDecimal(char* binary)
 {
@@ -147,95 +136,30 @@ char* ascii_to_decimal(char* buf){
 	return decimal;
 }
 
-void convertToTemperature()
-{
-  Rt = resistance;
-  Rt /= 32768;
-  Rt *= 430; //This is now the real resistance in Ohms
+//global temperature variable
+float temperature;
 
-  Z1 = -RTDa;
-  Z2 = RTDa * RTDa - (4 * RTDb);
-  Z3 = (4 * RTDb) / 100;
-  Z4 = 2 * RTDb;
+void Temp_sensor_handler(){
+  uint16_t rtd = thermo.readRTD();
+  float ratio = rtd;
+  ratio /= 32768;
 
-  temperature = Z2 + (Z3 * Rt);
-  temperature = (sqrt(temperature) + Z1) / Z4;
+  temperature = thermo.temperature(RNOMINAL, RREF);
+  //delay(50);
+  //Serial.printf("\nTemperature: %f", temperature); <-- this doesn't work
+  Serial.print("\nTemperature = "); Serial.println(temperature);
+  //byte* temperatureBytes = (byte*)&temperature; //convert temperature to bytes for serial.write()
+  //for (int i = sizeof(float) - 1; i >= 0; i--) {
+   // Serial.write(temperatureBytes[i]);
+ // }
 
-  if (temperature >= 0)
-  {
-    Serial.print("Temperature: ");
-    Serial.println(temperature); //Temperature in Celsius degrees
-    return; //exit
-  }
-  else
-  {
-    Rt /= 100;
-    Rt *= 100; // normalize to 100 ohm
-
-    rpoly = Rt;
-
-    temperature = -242.02;
-    temperature += 2.2228 * rpoly;
-    rpoly *= Rt; // square
-    temperature += 2.5859e-3 * rpoly;
-    rpoly *= Rt; // ^3
-    temperature -= 4.8260e-6 * rpoly;
-    rpoly *= Rt; // ^4
-    temperature -= 2.8183e-8 * rpoly;
-    rpoly *= Rt; // ^5
-    temperature += 1.5243e-10 * rpoly;
-
-    Serial.print("Temperature: ");
-    Serial.println(temperature); //Temperature in Celsius degrees
-  }
-  //Note: all formulas can be found in the AN-709 application note from Analog Devices
+  return;
 }
-
-void readRegister()
-{
-  SPI.beginTransaction(SPISettings(500000, MSBFIRST, SPI_MODE1));
-  digitalWrite(chipSelectPin, LOW);
-
-  SPI.transfer(0x80); //80h = 128 - config register
-  SPI.transfer(0xB0); //B0h = 176 - 10110000: bias ON, 1-shot, start 1-shot, 3-wire, rest are 0
-  digitalWrite(chipSelectPin, HIGH);
-
-  digitalWrite(chipSelectPin, LOW);
-  SPI.transfer(1);
-  reg1 = SPI.transfer(0xFF);
-  reg2 = SPI.transfer(0xFF);
-  digitalWrite(chipSelectPin, HIGH);
-
-  fullreg = reg1; //read MSB
-  fullreg <<= 8;  //Shift to the MSB part
-  fullreg |= reg2; //read LSB and combine it with MSB
-  fullreg >>= 1; //Shift D0 out.
-  resistance = fullreg; //pass the value to the resistance variable
-  //note: this is not yet the resistance of the RTD!
-
-  digitalWrite(chipSelectPin, LOW);
-
-  SPI.transfer(0x80); //80h = 128
-  SPI.transfer(144); //144 = 10010000
-  SPI.endTransaction();
-  digitalWrite(chipSelectPin, HIGH);
-
-  Serial.print("\nResistance: ");
-  Serial.println(resistance);
-}
-
-void Retrieve_Temperature_and_Print(){
-  readRegister();
-  convertToTemperature();
-  //Serial.printf("\nTemperature: %f", temperature);
-}
-
 
 void setup() {
-  SPI.begin();
+  
   Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
-
-  pinMode(chipSelectPin, OUTPUT); //because CS is manually switched  
+  thermo.begin(MAX31865_4WIRE);  // set to 2WIRE or 4WIRE as necessary
 }
 char data_value[16] = "";
 int saved_value_identity;
@@ -249,7 +173,7 @@ void loop() {
 	int pos = 0;
 	int temporary_value_identity;
 
-  Retrieve_Temperature_and_Print();
+  Temp_sensor_handler();
 
   if (Serial.available() > 0) {
     int bytesread = Serial.readBytes(buffer, 8);
