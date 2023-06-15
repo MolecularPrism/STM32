@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <Adafruit_MAX31865.h>
+#include <STM32FreeRTOS.h>
+#include <LiquidCrystal_I2C.h>
 
 #define DELIMITER 0
 #define SPACE 1
@@ -16,6 +18,15 @@
 #define MISC_ID 4
 #define NOT_A_ID_BYTE 9
 
+// Task parameters and UI parameters
+#define TASK_DELAY pdMS_TO_TICKS(3000)  // 3 seconds
+#define LAST_PAGE 3
+
+
+//LCD handle
+LiquidCrystal_I2C lcd(0x27,16,2);
+
+
 // Use software SPI: CS, DI, DO, CLK
 Adafruit_MAX31865 thermo = Adafruit_MAX31865(10, 11, 12, 13);
 
@@ -23,6 +34,30 @@ Adafruit_MAX31865 thermo = Adafruit_MAX31865(10, 11, 12, 13);
 #define RREF 430.0
 // 100.0 for PT100, 1000.0 for PT1000
 #define RNOMINAL  100.0
+
+int _next_page(int pg_num){
+	if(pg_num < LAST_PAGE){
+		pg_num++;
+	}
+	else if(pg_num == LAST_PAGE){
+		pg_num = 1;
+	}
+	return pg_num;
+}
+
+void vRT_UI_Handler(void *pvParameters){
+  UNUSED(pvParameters);
+  //int pg_num = *((int *)pvParameters); //apparently you need to set parameter like this for RTOS???
+  int pg_num = 1;
+	for(;;){
+		pg_num = _next_page(pg_num); //goes to next page number
+    lcd.setCursor(2,0);
+    lcd.printf("%d", pg_num);
+		vTaskDelay(3000); //this delays the time for 150ms
+	}
+}
+
+
 
 int binaryToDecimal(char* binary)
 {
@@ -156,12 +191,111 @@ void Temp_sensor_handler(){
   return;
 }
 
-void setup() {
-  
-  Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
-  thermo.begin(MAX31865_4WIRE);  // set to 2WIRE or 4WIRE as necessary
-}
 char data_value[16] = "";
+int saved_value_identity;
+void vmainblock(void*pvParameters){
+  UNUSED(pvParameters);
+  
+
+  for(;;){
+    char buffer[8];
+
+	  char* decimal_val;
+	  int is_decimal;
+	  int check_symbol;
+	  int pos = 0;
+	  int temporary_value_identity;
+
+    Temp_sensor_handler();
+  
+
+    if (Serial.available() > 0) {
+      int bytesread = Serial.readBytes(buffer, 8);
+  
+
+      is_decimal = is_Decimal(buffer);
+	    //check what non-decimal symbol it is
+	    check_symbol = check_nondec_symbol(buffer);
+	
+	    temporary_value_identity = identity_byte(buffer); 
+
+      if(temporary_value_identity != NOT_A_ID_BYTE){ //if identity byte is there
+		    saved_value_identity = temporary_value_identity; //save that 
+	    }
+
+	
+		
+	    if(is_decimal == 1){
+		    //if it's decimal then convert ascii to decimal val
+		    decimal_val = ascii_to_decimal(buffer);
+		    //Serial.printf("current decimal digit: %s", decimal_val);
+		    strcat(data_value, decimal_val); //concatenate decimal digit to data arr
+
+	    }
+	    //if it's not decimal, then check what kind of character it is
+  	  else{
+
+		    //if it's a period then we concatenate to data_value
+		    if(check_symbol == PERIOD){
+			    strcat(data_value, ".");
+		    }
+
+		    //if delimiter byte, then we clear data_value
+		    if(check_symbol == DELIMITER){
+		  	  //display data_value on LCD and the cursor location will depend on saved_value_identity
+
+		  	  data_value[0] = '\0'; //clear Data Value for new income value
+		    }
+
+		    //if it's a white space or some junk value, we just do nothing
+	    }
+	
+
+	
+	
+
+  
+    
+      buffer[8] = '\0'; 
+      Serial.printf("\nbuffer: %s", buffer);
+      //buffer[0] = '\0';
+
+   
+    }
+    vTaskDelay(1000); //this delays the time for 150ms
+    Serial.printf("\nData: %s", data_value);
+    Serial.printf("\nIdentity: %d", saved_value_identity);
+
+  }
+}
+
+
+void setup() {
+  //LCD SETUP
+  lcd.begin();
+  lcd.clear();         
+  lcd.backlight();
+  
+  //Main SETUP
+  Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
+  int page_number = 1; //we want to start on the 1st page on UI
+  thermo.begin(MAX31865_4WIRE);  // set to 2WIRE or 4WIRE as necessary
+  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE + 1000, NULL,   tskIDLE_PRIORITY + 1, NULL); 
+  xTaskCreate(vmainblock, "vmainblock", configMINIMAL_STACK_SIZE + 1000, NULL,   tskIDLE_PRIORITY + 2, NULL); 
+  
+  
+  
+
+    // start FreeRTOS
+  vTaskStartScheduler();
+}
+
+void loop() {
+  while(1) {
+  }
+}
+
+/*char data_value[16] = "";
 int saved_value_identity;
 
 void loop() {
@@ -174,6 +308,7 @@ void loop() {
 	int temporary_value_identity;
 
   Temp_sensor_handler();
+  
 
   if (Serial.available() > 0) {
     int bytesread = Serial.readBytes(buffer, 8);
@@ -235,4 +370,4 @@ void loop() {
 
 
  
-}
+}*/
