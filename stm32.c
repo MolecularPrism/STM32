@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include <Adafruit_MAX31865.h>
 #include <STM32FreeRTOS.h>
 #include <LiquidCrystal_I2C.h>
@@ -22,6 +23,9 @@
 #define TASK_DELAY pdMS_TO_TICKS(3000)  // 3 seconds
 #define LAST_PAGE 3
 
+//Task Object
+TaskHandle_t xUI_Cycle;
+
 
 //LCD handle
 LiquidCrystal_I2C lcd(0x27,16,2);
@@ -35,6 +39,15 @@ Adafruit_MAX31865 thermo = Adafruit_MAX31865(10, 11, 12, 13);
 // 100.0 for PT100, 1000.0 for PT1000
 #define RNOMINAL  100.0
 
+//global variables
+char data_value[16] = "";
+int saved_value_identity;
+float temperature;
+
+SemaphoreHandle_t temperatureMutex;
+
+
+
 int _next_page(int pg_num){
 	if(pg_num < LAST_PAGE){
 		pg_num++;
@@ -45,15 +58,35 @@ int _next_page(int pg_num){
 	return pg_num;
 }
 
+void Page1_UI(float temperature){
+  int temperature_int = (int)temperature;
+  
+  lcd.setCursor(0,0);
+  lcd.print("Temp: "); 
+  lcd.setCursor(6, 0); 
+  lcd.println(temperature_int);
+  lcd.setCursor(8, 0);
+  lcd.print("C");
+  lcd.setCursor(9, 0);
+  lcd.print(" ");
+  
+
+}
+
 void vRT_UI_Handler(void *pvParameters){
-  UNUSED(pvParameters);
-  //int pg_num = *((int *)pvParameters); //apparently you need to set parameter like this for RTOS???
+
   int pg_num = 1;
 	for(;;){
+    xSemaphoreTake(temperatureMutex, portMAX_DELAY);
+    float currentTemperature = temperature;
+    xSemaphoreGive(temperatureMutex);
+
 		pg_num = _next_page(pg_num); //goes to next page number
-    lcd.setCursor(2,0);
-    lcd.printf("%d", pg_num);
+    if(pg_num == 1){
+      Page1_UI(currentTemperature);
+    }
 		vTaskDelay(3000); //this delays the time for 150ms
+    lcd.clear();
 	}
 }
 
@@ -171,15 +204,17 @@ char* ascii_to_decimal(char* buf){
 	return decimal;
 }
 
-//global temperature variable
-float temperature;
 
 void Temp_sensor_handler(){
   uint16_t rtd = thermo.readRTD();
   float ratio = rtd;
   ratio /= 32768;
 
+  xSemaphoreTake(temperatureMutex, portMAX_DELAY);
+
   temperature = thermo.temperature(RNOMINAL, RREF);
+
+  xSemaphoreGive(temperatureMutex);
   //delay(50);
   //Serial.printf("\nTemperature: %f", temperature); <-- this doesn't work
   Serial.print("\nTemperature = "); Serial.println(temperature);
@@ -191,8 +226,7 @@ void Temp_sensor_handler(){
   return;
 }
 
-char data_value[16] = "";
-int saved_value_identity;
+
 void vmainblock(void*pvParameters){
   UNUSED(pvParameters);
   
@@ -269,18 +303,8 @@ void vmainblock(void*pvParameters){
   }
 }
 
-
-void setup() {
-  //LCD SETUP
-  lcd.begin();
-  lcd.clear();         
-  lcd.backlight();
-  
-  //Main SETUP
-  Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
-  int page_number = 1; //we want to start on the 1st page on UI
-  thermo.begin(MAX31865_4WIRE);  // set to 2WIRE or 4WIRE as necessary
-  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE + 1000, NULL,   tskIDLE_PRIORITY + 1, NULL); 
+void FreeRTOS_Tasks_Handler(){
+  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE + 1000, NULL ,   tskIDLE_PRIORITY + 1, &xUI_Cycle); 
   xTaskCreate(vmainblock, "vmainblock", configMINIMAL_STACK_SIZE + 1000, NULL,   tskIDLE_PRIORITY + 2, NULL); 
   
   
@@ -290,84 +314,27 @@ void setup() {
   vTaskStartScheduler();
 }
 
+
+void setup() {
+  //LCD SETUP
+  lcd.begin();
+  lcd.clear();         
+  lcd.backlight();
+
+  // Initialize the mutex
+  temperatureMutex = xSemaphoreCreateMutex();
+  
+  //Main SETUP
+  Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
+  int page_number = 1; //we want to start on the 1st page on UI
+  thermo.begin(MAX31865_4WIRE);  // set to 2WIRE or 4WIRE as necessary
+  FreeRTOS_Tasks_Handler();
+  
+}
+
+
 void loop() {
   while(1) {
   }
 }
 
-/*char data_value[16] = "";
-int saved_value_identity;
-
-void loop() {
-  char buffer[8];
-
-	char* decimal_val;
-	int is_decimal;
-	int check_symbol;
-	int pos = 0;
-	int temporary_value_identity;
-
-  Temp_sensor_handler();
-  
-
-  if (Serial.available() > 0) {
-    int bytesread = Serial.readBytes(buffer, 8);
-  
-
-    is_decimal = is_Decimal(buffer);
-	  //check what non-decimal symbol it is
-	  check_symbol = check_nondec_symbol(buffer);
-	
-	  temporary_value_identity = identity_byte(buffer); 
-
-    if(temporary_value_identity != NOT_A_ID_BYTE){ //if identity byte is there
-		  saved_value_identity = temporary_value_identity; //save that 
-	  }
-
-	
-		
-	  if(is_decimal == 1){
-		  //if it's decimal then convert ascii to decimal val
-		  decimal_val = ascii_to_decimal(buffer);
-		  //Serial.printf("current decimal digit: %s", decimal_val);
-		  strcat(data_value, decimal_val); //concatenate decimal digit to data arr
-
-	  }
-	  //if it's not decimal, then check what kind of character it is
-  	else{
-
-		  //if it's a period then we concatenate to data_value
-		  if(check_symbol == PERIOD){
-			  strcat(data_value, ".");
-		  }
-
-		  //if delimiter byte, then we clear data_value
-		  if(check_symbol == DELIMITER){
-		  	//display data_value on LCD and the cursor location will depend on saved_value_identity
-
-		  	data_value[0] = '\0'; //clear Data Value for new income value
-		  }
-
-		  //if it's a white space or some junk value, we just do nothing
-	  }
-	
-
-	
-	
-
-  
-    
-    buffer[8] = '\0'; 
-    Serial.printf("\nbuffer: %s", buffer);
-    //buffer[0] = '\0';
-
-   
-  }
-  delay(1000);
-  Serial.printf("\nData: %s", data_value);
-  Serial.printf("\nIdentity: %d", saved_value_identity);
-
-
-
- 
-}*/
