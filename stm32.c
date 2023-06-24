@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <math.h>
 #include <Adafruit_MAX31865.h>
-#include <STM32FreeRTOS.h>
+#include <MapleFreeRTOS821.h>
+//#include <STM32FreeRTOS.h>
+//#include <MapleFreeRTOS821.h>
 #include <LiquidCrystal_I2C.h>
 
 #define DELIMITER 0
@@ -25,6 +27,7 @@
 
 //Task Object
 TaskHandle_t xUI_Cycle;
+TaskHandle_t xMainBlock;
 
 
 //LCD handle
@@ -32,7 +35,7 @@ LiquidCrystal_I2C lcd(0x27,16,2);
 
 
 // Use software SPI: CS, DI, DO, CLK
-Adafruit_MAX31865 thermo = Adafruit_MAX31865(10, 11, 12, 13);
+Adafruit_MAX31865 thermo = Adafruit_MAX31865(PA4, PA7, PA6, PA5);
 
 // The value of the Rref resistor. Use 430.0 for PT100 and 4300.0 for PT1000
 #define RREF 430.0
@@ -66,11 +69,20 @@ void Page1_UI(float temperature){
   lcd.setCursor(6, 0); 
   lcd.println(temperature_int);
   lcd.setCursor(8, 0);
-  lcd.print("C");
-  lcd.setCursor(9, 0);
-  lcd.print(" ");
+  lcd.print("'C");
+ 
   
 
+}
+
+void Page2_UI(){
+  lcd.setCursor(0,0);
+  lcd.print("Speed: ");
+}
+
+void Page3_UI(){
+  lcd.setCursor(0,0);
+  lcd.print("Volt: ");
 }
 
 void vRT_UI_Handler(void *pvParameters){
@@ -84,6 +96,12 @@ void vRT_UI_Handler(void *pvParameters){
 		pg_num = _next_page(pg_num); //goes to next page number
     if(pg_num == 1){
       Page1_UI(currentTemperature);
+    }
+    else if(pg_num == 2){
+      Page2_UI();
+    }
+    else if(pg_num == 3){
+      Page3_UI();
     }
 		vTaskDelay(3000); //this delays the time for 150ms
     lcd.clear();
@@ -228,7 +246,7 @@ void Temp_sensor_handler(){
 
 
 void vmainblock(void*pvParameters){
-  UNUSED(pvParameters);
+  //UNUSED(pvParameters);
   
 
   for(;;){
@@ -241,10 +259,12 @@ void vmainblock(void*pvParameters){
 	  int temporary_value_identity;
 
     Temp_sensor_handler();
+    //Serial.print("\nTest");
   
 
     if (Serial.available() > 0) {
       int bytesread = Serial.readBytes(buffer, 8);
+      buffer[bytesread] = '\0'; // Add null character at the end of the buffer
   
 
       is_decimal = is_Decimal(buffer);
@@ -260,6 +280,8 @@ void vmainblock(void*pvParameters){
 	
 		
 	    if(is_decimal == 1){
+
+
 		    //if it's decimal then convert ascii to decimal val
 		    decimal_val = ascii_to_decimal(buffer);
 		    //Serial.printf("current decimal digit: %s", decimal_val);
@@ -291,21 +313,23 @@ void vmainblock(void*pvParameters){
   
     
       buffer[8] = '\0'; 
-      Serial.printf("\nbuffer: %s", buffer);
-      //buffer[0] = '\0';
-
+      Serial.print("\nbuffer: "); Serial.println(buffer);
+            //buffer[0] = '\0';
+      
+     
    
     }
     vTaskDelay(1000); //this delays the time for 150ms
-    Serial.printf("\nData: %s", data_value);
-    Serial.printf("\nIdentity: %d", saved_value_identity);
+    Serial.print("\nData: "); Serial.println(data_value);
+    Serial.print("\nIdentity: "); Serial.println(saved_value_identity);
+    
 
   }
 }
 
 void FreeRTOS_Tasks_Handler(){
-  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE + 1000, NULL ,   tskIDLE_PRIORITY + 1, &xUI_Cycle); 
-  xTaskCreate(vmainblock, "vmainblock", configMINIMAL_STACK_SIZE + 1000, NULL,   tskIDLE_PRIORITY + 2, NULL); 
+  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE * 5, NULL , tskIDLE_PRIORITY + 2, &xUI_Cycle); 
+  xTaskCreate(vmainblock, "vmainblock", configMINIMAL_STACK_SIZE * 6, NULL, tskIDLE_PRIORITY + 3, &xMainBlock); 
   
   
   
