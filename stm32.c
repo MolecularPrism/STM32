@@ -37,13 +37,10 @@ LiquidCrystal_I2C lcd(0x27,16,2);
 // Use software SPI: CS, DI, DO, CLK
 Adafruit_MAX31865 thermo = Adafruit_MAX31865(PA4, PA7, PA6, PA5);
 
-//Joystick pinouts
+//SW pinouts and variables
 const int SW_pin = PA12;
-const int X_pin = PA8;
-
-//Joystick debounce delay
-const int debounceDelay = 40;  // Adjust this delay based on your requirements
-volatile unsigned long lastDebounceTime = 0;  // Volatile variable to store the last debounce time
+int toggleSwitchState = 0;
+const int DEBOUNCE_DELAY = 50;  // Adjust this delay as needed
 
 // The value of the Rref resistor. Use 430.0 for PT100 and 4300.0 for PT1000
 #define RREF 430.0
@@ -54,14 +51,14 @@ volatile unsigned long lastDebounceTime = 0;  // Volatile variable to store the 
 char data_value[16] = "";
 int saved_value_identity;
 float temperature;
-int is_pressed;
+
 
 SemaphoreHandle_t temperatureMutex;
 
 
 
 int _next_page(int pg_num){
-  if(is_pressed == 0){
+  if(toggleSwitchState){
     if(pg_num < LAST_PAGE){
 		  pg_num++;
 	  }
@@ -249,35 +246,22 @@ void Temp_sensor_handler(){
   temperature = thermo.temperature(RNOMINAL, RREF);
 
   xSemaphoreGive(temperatureMutex);
-  //delay(50);
-  //Serial.printf("\nTemperature: %f", temperature); <-- this doesn't work
+
   Serial.print("\nTemperature = "); Serial.println(temperature);
-  //byte* temperatureBytes = (byte*)&temperature; //convert temperature to bytes for serial.write()
-  //for (int i = sizeof(float) - 1; i >= 0; i--) {
-   // Serial.write(temperatureBytes[i]);
- // }
+ 
 
   return;
 }
 
-void joystickInterrupt(){
-  if ((millis() - lastDebounceTime) > debounceDelay){
-    if(is_pressed == 0){ //is lcd task is still running
-      is_pressed = 1; //to indicate lcd task is paused
-    
-    }
-    else{
-      is_pressed = 0; //to indicate lcd task is running
-    }
-  }
-  
-  lastDebounceTime = millis();
+void toggleSwitchISR(){
+  delay(DEBOUNCE_DELAY);  // Add a delay to debounce the switch
+  toggleSwitchState = digitalRead(SW_pin);
+  Serial.print("\nToggle: "); Serial.println(toggleSwitchState);
 }
 
 
 void vmainblock(void*pvParameters){
-  //UNUSED(pvParameters);
-  
+
 
   for(;;){
     char buffer[8];
@@ -347,7 +331,6 @@ void vmainblock(void*pvParameters){
     
       buffer[8] = '\0'; 
       Serial.print("\nbuffer: "); Serial.println(buffer);
-            //buffer[0] = '\0';
       
      
    
@@ -361,7 +344,7 @@ void vmainblock(void*pvParameters){
 }
 
 void FreeRTOS_Tasks_Handler(){
-  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE * 5, NULL , tskIDLE_PRIORITY + 2, &xUI_Cycle); 
+  xTaskCreate(vRT_UI_Handler, "RT_UI_Handler", configMINIMAL_STACK_SIZE * 6, NULL , tskIDLE_PRIORITY + 2, &xUI_Cycle); 
   xTaskCreate(vmainblock, "vmainblock", configMINIMAL_STACK_SIZE * 6, NULL, tskIDLE_PRIORITY + 3, &xMainBlock); 
   
   
@@ -378,16 +361,11 @@ void setup() {
   lcd.clear();         
   lcd.backlight();
 
-  //Joystick pinouts
-  pinMode(SW_pin, INPUT);
-  digitalWrite(SW_pin, HIGH);
-
-  //Interrupt Attachments to Joystick
-  attachInterrupt(digitalPinToInterrupt(SW_pin), joystickInterrupt, RISING);
-
   
 
-
+  //SW interrupt attachment and pinout setup
+  pinMode(SW_pin, INPUT);
+  attachInterrupt(digitalPinToInterrupt(SW_pin), toggleSwitchISR, CHANGE);
 
   // Initialize the mutex
   temperatureMutex = xSemaphoreCreateMutex();
@@ -395,7 +373,6 @@ void setup() {
   //Main SETUP
   Serial.begin(115200, SERIAL_8N1); // Configures 1 stop bit and i think 1 start bit
   int page_number = 1; //we want to start on the 1st page on UI
-  is_pressed = 0; //set is_pressed state to 0 (global var)
   thermo.begin(MAX31865_4WIRE);  // set to 2WIRE or 4WIRE as necessary
   FreeRTOS_Tasks_Handler();
   
